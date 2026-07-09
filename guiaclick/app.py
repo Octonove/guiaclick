@@ -65,7 +65,7 @@ class App(tk.Tk):
         self.var_title = tk.StringVar(value="Como hacer …")
         ttk.Entry(meta, textvariable=self.var_title, width=40).pack(anchor="w", fill="x")
         ttk.Button(top, text="⚙ Opciones", command=self._settings_dialog).pack(side="right")
-        ttk.Button(top, text="IA (Ollama)…", command=self._ollama_dialog).pack(side="right", padx=(0, 6))
+        ttk.Button(top, text="Configurar IA…", command=self._ollama_dialog).pack(side="right", padx=(0, 6))
 
         body = ttk.Frame(self, padding=(14, 0)); body.pack(fill="both", expand=True)
         body.columnconfigure(1, weight=1)
@@ -458,7 +458,7 @@ class App(tk.Tk):
             return
         if not llm.available():
             messagebox.showinfo(APP_NAME, "Para mejorar los textos necesitas Ollama. "
-                                "Abre 'IA (Ollama)…' para configurarlo.")
+                                "Abre 'Configurar IA…' para elegir Ollama o una API.")
             return
         self._set_status("Mejorando textos con IA…")
         steps = list(self.steps)   # snapshot: el usuario podria borrar pasos mientras corre
@@ -538,46 +538,11 @@ class App(tk.Tk):
         win.grab_set()
 
     def _ollama_dialog(self) -> None:
-        win = tk.Toplevel(self); theme.center_window(win)
-        win.title("Configurar IA local (Ollama)"); win.configure(bg=theme.BG)
-        win.transient(self); win.resizable(False, False)
-        frm = ttk.Frame(win, padding=18); frm.pack(fill="both", expand=True)
-        ttk.Label(frm, text="IA local opcional con Ollama", style="H.TLabel").pack(anchor="w")
-        ttk.Label(frm, text="Con Ollama, GuiaClick redacta mejor los pasos. Es gratis y todo\n"
-                  "ocurre en tu PC. Es opcional: sin ella, se usan textos automaticos.",
-                  style="Muted.TLabel", justify="left").pack(anchor="w", pady=(2, 10))
-        ram, gpu = llm.system_ram_gb(), llm.has_gpu()
-        rec, size, motivo = llm.recommend_model(ram, gpu)
-        info = ttk.LabelFrame(frm, text="Tu equipo", padding=10); info.pack(fill="x")
-        ttk.Label(info, text=f"RAM: {ram:.0f} GB · GPU NVIDIA: {'si' if gpu else 'no'}",
-                  style="CardMuted.TLabel").pack(anchor="w")
-        ttk.Label(info, text=f"Recomendado: {rec} ({size}) — {motivo}", style="CardMuted.TLabel",
-                  justify="left", wraplength=380).pack(anchor="w", pady=(4, 0))
-        body = ttk.Frame(frm); body.pack(fill="x")
-
-        def render():
-            for w in body.winfo_children():
-                w.destroy()
-            mods = llm.list_models(timeout=5.0)
-            if mods:
-                ttk.Label(body, text=f"✓ Ollama detectado ({len(mods)} modelo/s). Ya puedes usar "
-                          "'Mejorar textos con IA'.", style="CardMuted.TLabel",
-                          wraplength=380, justify="left").pack(anchor="w", pady=(10, 0))
-            else:
-                g = ttk.LabelFrame(body, text="Como activarla (una vez)", padding=10)
-                g.pack(fill="x", pady=(10, 0))
-                ttk.Label(g, text="1. Instala Ollama (ollama.com).\n2. En una terminal pega:",
-                          style="CardMuted.TLabel", justify="left").pack(anchor="w")
-                cmd = f"ollama run {rec}"
-                ent = ttk.Entry(g, width=30); ent.insert(0, cmd); ent.configure(state="readonly")
-                ent.pack(side="left", pady=(2, 0))
-                ttk.Button(g, text="Copiar", command=lambda: (self.clipboard_clear(),
-                           self.clipboard_append(cmd))).pack(side="left", padx=6, pady=(2, 0))
-        ttk.Button(frm, text="🔄 Probar conexion", command=render).pack(anchor="w", pady=(10, 0))
-        ttk.Button(frm, text="Abrir ollama.com",
-                   command=lambda: webbrowser.open("https://ollama.com")).pack(anchor="w", pady=(6, 0))
-        render()
-        win.grab_set()
+        # Dialogo de IA UNIFICADO de la suite: Ollama local (gratis) o una API
+        # potente (OpenAI/Gemini/Anthropic). Se configura una vez para las 5 apps.
+        from octonove_core.ai_dialog import show_ai_dialog
+        show_ai_dialog(self, on_saved=lambda: self._set_status(
+            "IA configurada. Ya puedes usar 'Mejorar textos con IA'."))
 
     # -------------------------------------------------------------- varios
     def _ui(self, fn) -> None:
