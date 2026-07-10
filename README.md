@@ -2,6 +2,16 @@
 
 Generador de **guías paso a paso** para **Windows** (estilo Scribe, pero **100% local**): graba tus clics y GuiaClick captura cada pantalla, la anota y monta la guía lista para compartir.
 
+## ⬇️ Descargar (Windows 10/11)
+
+### ➡️ [**Descargar GuiaClick (instalador .exe)**](https://github.com/Octonove/guiaclick/releases/latest/download/GuiaClick-Setup.exe)
+
+Descarga **directa** del instalador, sin registro. También puedes ver la [última versión y notas](https://github.com/Octonove/guiaclick/releases/latest).
+
+> Si Windows muestra *"Windows protegió tu PC"* (es normal en programas nuevos sin firma): pulsa **Más información → Ejecutar de todas formas**. Se instala sin permisos de administrador.
+
+---
+
 ## Funciones
 
 - **Grabación de pasos**: cada clic (izquierdo y, opcionalmente, derecho) captura la pantalla del monitor correspondiente con el punto resaltado y numerado.
