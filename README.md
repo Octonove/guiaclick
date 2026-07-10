@@ -14,11 +14,12 @@ Descarga **directa** del instalador, sin registro. También puedes ver la [últi
 
 ## Funciones
 
-- **Grabación de pasos**: cada clic (izquierdo y, opcionalmente, derecho) captura la pantalla del monitor correspondiente con el punto resaltado y numerado.
+- **Grabación de pasos**: cada clic (izquierdo y, opcionalmente, derecho) captura la pantalla del monitor correspondiente con el punto resaltado y numerado. Los dobles clics se fusionan en un solo paso, y la barra de grabación **no aparece en las capturas** (Windows 10/11) y puedes arrastrarla a donde no moleste.
 - **Editor**: reordena, duplica o borra pasos; edita título y nota de cada uno; vista previa en vivo.
-- **Privacidad**: difumina zonas sensibles arrastrando sobre la imagen.
+- **Difuminar y recortar**: oculta zonas sensibles arrastrando sobre la imagen, o **recorta** el área del clic para resaltar solo lo importante de ese paso (con *deshacer recorte*).
+- **Guardar y continuar después**: guarda la guía como proyecto `.guiaclick` y retómala en otra sesión. Si cierras sin guardar, al volver a abrir te ofrece **recuperar** la guía autoguardada.
 - **Textos con IA** (opcional, [Ollama](https://ollama.com)): reescribe los pasos de forma clara e imperativa; sin Ollama, títulos automáticos a partir de la ventana activa.
-- **Exportación**: HTML autocontenido (imágenes embebidas), Markdown (con carpeta de imágenes) y **PDF** (portada + un paso por página).
+- **Exportación**: HTML autocontenido (imágenes embebidas), Markdown (con carpeta de imágenes) y **PDF** con **maquetado fluido** (varios pasos por página, sin huecos en blanco).
 
 ## Stack
 

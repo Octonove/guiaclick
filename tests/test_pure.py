@@ -8,12 +8,69 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PIL import Image  # noqa: E402
-from guiaclick import capture, guide  # noqa: E402
+from guiaclick import capture, guide, project  # noqa: E402
 
 
 def make_step(w=240, h=140, x=60, y=70, window="Documento - Bloc de notas", button="left"):
     return capture.Step(image=Image.new("RGB", (w, h), (200, 210, 230)),
                         x=x, y=y, window=window, button=button)
+
+
+# ------------------------------------------------------ recorte de paso
+def test_crop_step_adjusts_click_and_blur():
+    st = make_step(w=400, h=300, x=200, y=150)
+    st.blur = [(10, 10, 60, 60), (350, 250, 390, 290)]
+    ok = capture.crop_step(st, (100, 100, 300, 250))
+    assert ok
+    assert (st.image.width, st.image.height) == (200, 150)
+    assert (st.x, st.y) == (100, 50)                 # clic reubicado al recorte
+    assert st.blur == [(0, 0, 0, 0)] or len(st.blur) == 0 or st.blur[0][0] == 0
+    # el 2o blur quedaba fuera del recorte -> se descarta; el 1o se reencuadra
+    assert all(0 <= b[0] and b[2] <= st.image.width for b in st.blur)
+
+
+def test_crop_step_restore():
+    st = make_step(w=400, h=300, x=200, y=150)
+    assert capture.crop_step(st, (50, 50, 350, 250))
+    assert st.image.width == 300 and st.original is not None
+    assert capture.restore_step(st)
+    assert (st.image.width, st.image.height) == (400, 300)
+    assert (st.x, st.y) == (200, 150) and st.original is None
+
+
+def test_crop_step_rejects_tiny():
+    st = make_step()
+    assert capture.crop_step(st, (10, 10, 20, 20)) is False   # < min_side
+    assert st.original is None                                 # no toca nada
+
+
+# ------------------------------------------------------ proyecto .guiaclick
+def test_project_roundtrip(tmp_path):
+    st1 = make_step(window="A"); st1.title = "Paso uno"; st1.blur = [(5, 5, 40, 40)]
+    st2 = make_step(window="B")
+    capture.crop_step(st2, (20, 20, 200, 120))    # st2 tiene estado de recorte
+    p = tmp_path / "g.guiaclick"
+    project.save_project(p, [st1, st2], title="Mi Guia")
+    steps, title = project.load_project(p)
+    assert title == "Mi Guia" and len(steps) == 2
+    assert steps[0].title == "Paso uno" and steps[0].blur == [(5, 5, 40, 40)]
+    assert steps[1].original is not None            # el recorte se preserva
+    assert capture.restore_step(steps[1])           # y se puede deshacer tras reabrir
+
+
+def test_project_load_bad_file(tmp_path):
+    bad = tmp_path / "x.guiaclick"
+    bad.write_text("no soy un zip", encoding="utf-8")
+    with pytest.raises(project.ProjectError):
+        project.load_project(bad)
+
+
+def test_autosave_and_clear(tmp_path):
+    project.autosave(tmp_path, [make_step()], "T")
+    got = project.load_autosave(tmp_path)
+    assert got is not None and len(got[0]) == 1
+    project.autosave(tmp_path, [], "")              # sin pasos -> borra
+    assert project.load_autosave(tmp_path) is None
 
 
 def test_clean_window_title():
@@ -89,12 +146,26 @@ def test_export_markdown(tmp_path):
     assert len(imgs) == 2
 
 
-def test_export_pdf(tmp_path):
+def test_export_pdf_fluid(tmp_path):
     import fitz
     out = str(tmp_path / "g.pdf")
-    guide.export_pdf([make_step(), make_step(), make_step()], out, title="Guia PDF")
+    # 3 capturas apaisadas: el layout fluido las agrupa (antes eran 4 paginas
+    # con ~56% de cada una en blanco). Debe salir mas compacto.
+    guide.export_pdf([make_step(w=480, h=270)] * 3, out, title="Guia PDF")
     doc = fitz.open(out)
-    assert doc.page_count == 4  # portada + 3 pasos
+    assert 1 <= doc.page_count <= 2      # compacto, no 1-pagina-por-paso
+    # cada imagen debe ocupar mas ancho del que dejaba el layout viejo
+    imgs = sum(len(doc[p].get_images()) for p in range(doc.page_count))
+    assert imgs == 3
+    doc.close()
+
+
+def test_export_pdf_paginates_when_full(tmp_path):
+    import fitz
+    out = str(tmp_path / "many.pdf")
+    guide.export_pdf([make_step(w=480, h=270)] * 12, out, title="Larga")
+    doc = fitz.open(out)
+    assert doc.page_count >= 4           # 12 pasos no caben en 1-2 paginas
     doc.close()
 
 

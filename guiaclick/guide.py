@@ -221,42 +221,67 @@ def export_markdown(steps, out_path: str, *, title: str = "Guia", intro: str = "
 
 def export_pdf(steps, out_path: str, *, title: str = "Guia", intro: str = "",
                highlight_color: str = "#CE6E61", blur_strength: int = 14) -> str:
+    """PDF con layout FLUIDO: los pasos se colocan uno tras otro y solo se salta
+    de pagina cuando el siguiente no cabe. (Antes cada paso iba en su propia
+    pagina A4 y una captura 16:9 dejaba ~56% de la pagina en blanco.)"""
     import fitz
     doc = fitz.open()
     try:
-        PW, PH, M = 595, 842, 40   # A4 puntos, margen
-        # portada simple
+        PW, PH, M = 595, 842, 40      # A4 en puntos, margen
+        TW = PW - 2 * M               # ancho util de texto/imagen
+        MAX_IMG_H = 330               # tope de alto por imagen: caben ~2 pasos 16:9 por pagina
+        GAP = 18                      # aire entre pasos
+
         page = doc.new_page(width=PW, height=PH)
-        page.insert_textbox(fitz.Rect(M, 80, PW - M, 200), title, fontsize=24,
-                            color=(0.12, 0.23, 0.37), fontname="helv")
+        # titulo como encabezado de la primera pagina (no portada suelta)
+        title_h = _wrapped_height(title, TW, 22, fontname="hebo") + 10
+        page.insert_textbox(fitz.Rect(M, M, PW - M, M + title_h), title, fontsize=22,
+                            color=(0.12, 0.23, 0.37), fontname="hebo")
+        y = M + title_h
         if intro.strip():
-            page.insert_textbox(fitz.Rect(M, 150, PW - M, 320), intro.strip(),
+            intro_h = _wrapped_height(intro.strip(), TW, 11) + 8
+            page.insert_textbox(fitz.Rect(M, y, PW - M, y + intro_h), intro.strip(),
                                 fontsize=11, color=(0.3, 0.35, 0.42))
+            y += intro_h
+        # linea separadora bajo el encabezado (como en el HTML)
+        page.draw_line(fitz.Point(M, y + 4), fitz.Point(PW - M, y + 4),
+                       color=(0.81, 0.43, 0.38), width=1.5)
+        y += 14
+
         for i, step in enumerate(steps, 1):
-            img = render_step(step, i, highlight_color=highlight_color, blur_strength=blur_strength)
-            png = _png_bytes(img)
-            page = doc.new_page(width=PW, height=PH)
+            img = render_step(step, i, highlight_color=highlight_color,
+                              blur_strength=blur_strength)
             head = f"{i}. {title_or_auto(step, i)}"
-            tw = PW - 2 * M
-            head_h = max(20, _wrapped_height(head, tw, 13, fontname="hebo") + 6)
-            page.insert_textbox(fitz.Rect(M, M, PW - M, M + head_h), head, fontsize=13,
+            head_h = max(18, _wrapped_height(head, TW, 13, fontname="hebo") + 4)
+            note = step.note.strip()
+            note_h = (_wrapped_height(note, TW, 10) + 4) if note else 0
+            ratio = min(TW / img.width, MAX_IMG_H / img.height)
+            img_w, img_h = img.width * ratio, img.height * ratio
+            block_h = head_h + note_h + img_h + GAP
+
+            # salto de pagina solo si el bloque no cabe (y no es lo primero de la pagina)
+            if y + block_h > PH - M and y > M + 1:
+                page = doc.new_page(width=PW, height=PH)
+                y = M
+            # bloque mas alto que una pagina entera (imagen muy vertical): reescala
+            if block_h > PH - 2 * M:
+                extra = block_h - (PH - 2 * M)
+                img_h = max(80, img_h - extra)
+                img_w = img.width * (img_h / img.height)
+
+            page.insert_textbox(fitz.Rect(M, y, PW - M, y + head_h), head, fontsize=13,
                                 color=(0.12, 0.23, 0.37), fontname="hebo")
-            top = M + head_h
-            if step.note.strip():
-                note = step.note.strip()
-                note_h = _wrapped_height(note, tw, 10) + 6
-                page.insert_textbox(fitz.Rect(M, top, PW - M, top + note_h), note,
+            y += head_h
+            if note:
+                page.insert_textbox(fitz.Rect(M, y, PW - M, y + note_h), note,
                                     fontsize=10, color=(0.3, 0.35, 0.42))
-                top += note_h
-            # imagen ajustada al ancho conservando proporcion
-            avail_w, avail_h = PW - 2 * M, PH - top - M
-            iw, ih = img.width, img.height
-            ratio = min(avail_w / iw, avail_h / ih)
-            w, h = iw * ratio, ih * ratio
-            x0 = M + (avail_w - w) / 2
-            rect = fitz.Rect(x0, top, x0 + w, top + h)
-            page.insert_image(rect, stream=png)
-        if doc.page_count == 0:
+                y += note_h
+            x0 = M + (TW - img_w) / 2
+            page.insert_image(fitz.Rect(x0, y, x0 + img_w, y + img_h),
+                              stream=_png_bytes(img))
+            y += img_h + GAP
+
+        if not steps:
             raise GuideError("No hay pasos para exportar.")
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         doc.save(out_path, garbage=3, deflate=True)
