@@ -18,8 +18,9 @@ Descarga **directa** del instalador, sin registro. También puedes ver la [últi
 - **Editor**: reordena, duplica o borra pasos; edita título y nota de cada uno; vista previa en vivo.
 - **Difuminar y recortar**: oculta zonas sensibles arrastrando sobre la imagen, o **recorta** el área del clic para resaltar solo lo importante de ese paso (con *deshacer recorte*).
 - **Guardar y continuar después**: guarda la guía como proyecto `.guiaclick` y retómala en otra sesión. Si cierras sin guardar, al volver a abrir te ofrece **recuperar** la guía autoguardada.
-- **Textos con IA** (opcional, [Ollama](https://ollama.com)): reescribe los pasos de forma clara e imperativa; sin Ollama, títulos automáticos a partir de la ventana activa.
-- **Exportación**: HTML autocontenido (imágenes embebidas), Markdown (con carpeta de imágenes) y **PDF** con **maquetado fluido** (varios pasos por página, sin huecos en blanco).
+- **Continuar una guía**: al grabar sobre una guía abierta puedes **añadir** los nuevos pasos al final (o empezar de cero). También puedes **reemplazar la imagen** de un paso concreto por otra captura.
+- **Textos con IA** (opcional, [Ollama](https://ollama.com) o una API de OpenAI/Gemini/Anthropic): reescribe los pasos de forma clara e imperativa; sin IA, títulos automáticos a partir de la ventana activa.
+- **Exportación**: HTML autocontenido (imágenes embebidas), Markdown (con carpeta de imágenes) y **PDF** con **maquetado fluido** (varios pasos por página, sin huecos en blanco) y el **título de cada paso** bien visible.
 
 ## Stack
 

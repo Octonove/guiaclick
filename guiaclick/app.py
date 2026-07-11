@@ -48,6 +48,7 @@ class App(tk.Tk):
         self._tool_mode = "blur"       # "blur" (difuminar) | "crop" (recortar)
         self._project_path: str | None = None
         self._autosave_id: str | None = None
+        self._append_base: list | None = None   # pasos previos al grabar en modo "añadir"
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -129,6 +130,7 @@ class App(tk.Tk):
 
         tiprow = ttk.Frame(right); tiprow.pack(fill="x", pady=(4, 0))
         ttk.Button(tiprow, text="Previsualizar paso", command=self._preview_step).pack(side="left")
+        ttk.Button(tiprow, text="Reemplazar imagen…", command=self._replace_image).pack(side="left", padx=6)
         ttk.Button(tiprow, text="Deshacer recorte", command=self._undo_crop).pack(side="right")
         ttk.Button(tiprow, text="Quitar difuminados", command=self._clear_blur).pack(side="right", padx=6)
 
@@ -152,9 +154,28 @@ class App(tk.Tk):
         if not capture.AVAILABLE:
             messagebox.showerror(APP_NAME, "La captura no esta disponible en este equipo.")
             return
-        if self.steps and not messagebox.askyesno(
-                APP_NAME, "Empezar una guia nueva descartara los pasos actuales. ¿Seguir?"):
-            return
+        self._append_base = None
+        if self.steps:
+            # 3 opciones: añadir al final (continuar la guia), empezar de cero, o cancelar
+            ans = messagebox.askyesnocancel(
+                APP_NAME,
+                "Ya tienes una guia abierta con "
+                f"{len(self.steps)} paso(s).\n\n"
+                "•  Si  →  AÑADIR los nuevos pasos al final de esta guia.\n"
+                "•  No  →  empezar una guia NUEVA (descarta la actual).\n"
+                "•  Cancelar  →  no grabar.")
+            if ans is None:
+                return
+            if ans:
+                self._append_base = list(self.steps)   # se conservan y se anteponen al parar
+        # Cancela un autoguardado con debounce pendiente: si saltara ahora (con
+        # steps vacio) borraria la copia de recuperacion en disco.
+        if self._autosave_id is not None:
+            try:
+                self.after_cancel(self._autosave_id)
+            except (tk.TclError, ValueError):
+                pass
+            self._autosave_id = None
         self.steps = []
         self.sel = -1
         self._refresh_list()
@@ -213,6 +234,10 @@ class App(tk.Tk):
         # Windows 10 2004+ la ocultamos de la captura sin ocultarla en pantalla.
         if not capture.exclude_from_capture(capture.root_hwnd(tb.winfo_id())):
             logger.debug("SetWindowDisplayAffinity no aplico; la barra podria salir en capturas.")
+        # Cerrar la barra con la X (o Alt+F4) equivale a 'Detener': sin esto la
+        # ventana principal seguiria oculta y la grabacion quedaria zombie (habria
+        # que matar el proceso), perdiendo los pasos aun en memoria.
+        tb.protocol("WM_DELETE_WINDOW", self._stop_record)
         self._toolbar = tb
 
     def _tb_drag_start(self, e) -> None:
@@ -248,7 +273,7 @@ class App(tk.Tk):
             except (tk.TclError, ValueError):
                 pass
             self._poll_id = None
-        self.steps = self.recorder.stop()
+        recorded = self.recorder.stop()
         self.recorder = None
         if self._toolbar is not None:
             try:
@@ -260,14 +285,25 @@ class App(tk.Tk):
         self.deiconify()
         self.lift()
         self.btn_rec.config(text="●  Grabar guia")
-        # texto por defecto de cada paso
+        # modo "añadir": los nuevos pasos van al final de la guia previa
+        base = self._append_base or []
+        self._append_base = None
+        self.steps = base + recorded
+        # texto por defecto de cada paso (numerado por su posicion final)
         for i, st in enumerate(self.steps, 1):
             if not st.title:
                 st.title = guide.auto_title(st, i)
         self._refresh_list()
         if self.steps:
-            self._select(0)
-            self._set_status(f"{len(self.steps)} pasos capturados. Edita y exporta.")
+            if base and recorded:
+                self._select(len(base))      # primer paso nuevo, para verlo enseguida
+                self._set_status(f"{len(recorded)} paso(s) añadido(s) · {len(self.steps)} en total.")
+            else:
+                self._select(0)
+                if base:                     # se grabo en modo añadir pero sin clics
+                    self._set_status("No se capturo ningun clic; la guia se mantiene intacta.")
+                else:
+                    self._set_status(f"{len(self.steps)} pasos capturados. Edita y exporta.")
         else:
             self._set_status("No se capturo ningun clic.")
         self._autosave()
@@ -452,6 +488,7 @@ class App(tk.Tk):
             self.steps[i], self.steps[j] = self.steps[j], self.steps[i]
             self._refresh_list()
             self._select(j)
+            self._autosave()   # persistir el nuevo orden como el resto de mutaciones
 
     def _delete_step(self) -> None:
         i = self.sel
@@ -465,17 +502,48 @@ class App(tk.Tk):
 
     def _add_manual_step(self) -> None:
         if not self.steps:
-            messagebox.showinfo(APP_NAME, "Primero graba una guia (los pasos se duplican del actual).")
+            messagebox.showinfo(APP_NAME, "Primero graba una guia (o abre una guardada). "
+                                "El paso manual se crea copiando el paso actual; luego puedes "
+                                "'Reemplazar imagen…' para poner otra captura.")
             return
         st = self._cur()
         if st is None:
             return
-        import copy
         new = capture.Step(image=st.image.copy(), x=st.x, y=st.y, window=st.window,
                            button=st.button, title="Paso nuevo", note="", blur=list(st.blur))
         self.steps.insert(self.sel + 1, new)
         self._refresh_list()
         self._select(self.sel + 1)
+        self._set_status("Paso manual añadido. Usa 'Reemplazar imagen…' para cambiar su captura.")
+        self._autosave()
+
+    def _replace_image(self) -> None:
+        """Sustituye la captura del paso actual por una imagen de archivo. Util para
+        pasos manuales o para corregir una captura concreta sin volver a grabar."""
+        st = self._cur()
+        if st is None:
+            messagebox.showinfo(APP_NAME, "Selecciona primero un paso de la lista.")
+            return
+        p = filedialog.askopenfilename(
+            title="Elegir imagen para este paso", initialdir=self.cfg.output_dir,
+            filetypes=[("Imagenes", "*.png *.jpg *.jpeg *.bmp *.gif *.webp"), ("Todos", "*.*")])
+        if not p:
+            return
+        from PIL import Image
+        try:
+            img = Image.open(p)
+            img.load()
+            img = img.convert("RGB")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror(APP_NAME, f"No se pudo abrir la imagen:\n{exc}")
+            return
+        st.image = img
+        st.original = None            # el recorte previo ya no aplica a la nueva imagen
+        st.blur = []                  # los difuminados eran para la imagen anterior
+        st.x = min(max(0, st.x), img.width - 1)    # marca del clic dentro de la nueva imagen
+        st.y = min(max(0, st.y), img.height - 1)
+        self._draw_canvas()
+        self._set_status("Imagen del paso reemplazada.")
         self._autosave()
 
     # -------------------------------------------------------------- export
@@ -735,9 +803,16 @@ class App(tk.Tk):
             if not messagebox.askyesno(APP_NAME, "Hay una grabacion en curso. ¿Salir igualmente?"):
                 return
             try:
-                self.recorder.stop()
+                recorded = self.recorder.stop()
             except Exception:  # noqa: BLE001
-                pass
+                recorded = []
+            # Fusiona lo grabado con la guia previa (modo "añadir"): sin esto,
+            # self.steps seria [] durante la grabacion y el autoguardado de abajo
+            # borraria la guia cargada al cerrar.
+            base = self._append_base or []
+            self._append_base = None
+            if base or recorded:
+                self.steps = base + recorded
         # Guarda el estado final de forma sincrona (incluye ultimas ediciones de
         # texto) para poder recuperar la guia la proxima vez que abras la app.
         if self.steps:

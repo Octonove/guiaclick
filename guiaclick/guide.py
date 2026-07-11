@@ -120,34 +120,6 @@ def _png_bytes(img) -> bytes:
     return buf.getvalue()
 
 
-def _wrapped_height(text: str, width: float, fontsize: float, *,
-                    fontname: str = "helv", line_factor: float = 1.32,
-                    max_lines: int = 8) -> float:
-    """Alto (pt) que ocupara `text` al ajustarse a `width`. Evita que un titulo o
-    nota largos se corten con un rectangulo de alto fijo. Acotado a max_lines."""
-    import fitz
-    if not text.strip():
-        return 0.0
-    lines = 0
-    for para in text.splitlines() or [text]:
-        words = para.split()
-        if not words:
-            lines += 1
-            continue
-        cur = ""
-        for w in words:
-            trial = (cur + " " + w).strip()
-            if cur and fitz.get_text_length(trial, fontname=fontname, fontsize=fontsize) > width:
-                lines += 1
-                cur = w
-            else:
-                cur = trial
-        if cur:
-            lines += 1
-    lines = max(1, min(lines, max_lines))
-    return lines * fontsize * line_factor
-
-
 def title_or_auto(step, index: int) -> str:
     return step.title.strip() if step.title.strip() else auto_title(step, index)
 
@@ -219,45 +191,99 @@ def export_markdown(steps, out_path: str, *, title: str = "Guia", intro: str = "
     return str(out)
 
 
+def _rgb01(color: str) -> tuple[float, float, float]:
+    r, g, b = _hex_to_rgb(color)
+    return r / 255, g / 255, b / 255
+
+
+def _safe_hex(color: str) -> str:
+    """Devuelve un color #RRGGBB valido para CSS (o el terracota por defecto)."""
+    c = (color or "").strip()
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", c):
+        return c
+    if re.fullmatch(r"#[0-9a-fA-F]{3}", c):
+        return "#" + "".join(ch * 2 for ch in c[1:])
+    return "#CE6E61"
+
+
+def _measure_html(html_str: str, width: float) -> float:
+    """Alto (pt) que ocupa `html_str` al fluir en `width`, medido en una pagina
+    scratch. Fiable: insert_htmlbox respeta las metricas reales de la fuente, a
+    diferencia de estimar el alto a mano (que hacia que un titulo desbordase su
+    caja y PyMuPDF lo descartara en silencio)."""
+    import fitz
+    d = fitz.open()
+    try:
+        pg = d.new_page(width=width + 2 * 40, height=4000)
+        spare, _ = pg.insert_htmlbox(fitz.Rect(0, 0, width, 4000), html_str)
+        return max(1.0, 4000 - spare)
+    finally:
+        d.close()
+
+
+def _step_html(num: int, title: str, note: str, *, accent: str) -> str:
+    """Bloque HTML de un paso: numero (en color de acento) + titulo en negrita +
+    nota opcional en gris. Se dibuja con insert_htmlbox (nunca se recorta)."""
+    t = html.escape(title)
+    note_html = ""
+    if note:
+        n = html.escape(note).replace("\n", "<br>")
+        note_html = (f'<div style="font-family:sans-serif;font-size:10px;color:#4d5a6b;'
+                     f'line-height:1.35;margin-top:3px">{n}</div>')
+    return (f'<div style="font-family:sans-serif;font-size:13px;line-height:1.3">'
+            f'<span style="font-weight:bold;color:{accent}">{num}. </span>'
+            f'<span style="font-weight:bold;color:#1e3a5f">{t}</span>{note_html}</div>')
+
+
 def export_pdf(steps, out_path: str, *, title: str = "Guia", intro: str = "",
                highlight_color: str = "#CE6E61", blur_strength: int = 14) -> str:
     """PDF con layout FLUIDO: los pasos se colocan uno tras otro y solo se salta
     de pagina cuando el siguiente no cabe. (Antes cada paso iba en su propia
-    pagina A4 y una captura 16:9 dejaba ~56% de la pagina en blanco.)"""
+    pagina A4 y una captura 16:9 dejaba ~56% de la pagina en blanco.)
+
+    El texto se dibuja con insert_htmlbox, que refluye respetando las metricas
+    reales de la fuente: asi el TITULO de cada paso siempre se renderiza (con
+    insert_textbox y un alto calculado a mano, los titulos podian desbordar la
+    caja y descartarse en silencio)."""
     import fitz
+    if not steps:
+        raise GuideError("No hay pasos para exportar.")
+    accent = _safe_hex(highlight_color)
     doc = fitz.open()
     try:
         PW, PH, M = 595, 842, 40      # A4 en puntos, margen
         TW = PW - 2 * M               # ancho util de texto/imagen
         MAX_IMG_H = 330               # tope de alto por imagen: caben ~2 pasos 16:9 por pagina
         GAP = 18                      # aire entre pasos
+        GAP_TI = 6                    # aire entre el titulo del paso y su imagen
 
         page = doc.new_page(width=PW, height=PH)
+        y = M
         # titulo como encabezado de la primera pagina (no portada suelta)
-        title_h = _wrapped_height(title, TW, 22, fontname="hebo") + 10
-        page.insert_textbox(fitz.Rect(M, M, PW - M, M + title_h), title, fontsize=22,
-                            color=(0.12, 0.23, 0.37), fontname="hebo")
-        y = M + title_h
+        title_html = (f'<div style="font-family:sans-serif;font-size:22px;font-weight:bold;'
+                      f'color:#1e3a5f;line-height:1.15">{html.escape(title)}</div>')
+        th = _measure_html(title_html, TW)
+        page.insert_htmlbox(fitz.Rect(M, y, PW - M, y + th + 2), title_html)
+        y += th + 2
         if intro.strip():
-            intro_h = _wrapped_height(intro.strip(), TW, 11) + 8
-            page.insert_textbox(fitz.Rect(M, y, PW - M, y + intro_h), intro.strip(),
-                                fontsize=11, color=(0.3, 0.35, 0.42))
-            y += intro_h
+            intro_html = (f'<div style="font-family:sans-serif;font-size:11px;color:#4d5a6b;'
+                          f'line-height:1.4">{html.escape(intro.strip())}</div>')
+            ih = _measure_html(intro_html, TW)
+            page.insert_htmlbox(fitz.Rect(M, y, PW - M, y + ih + 2), intro_html)
+            y += ih + 2
         # linea separadora bajo el encabezado (como en el HTML)
-        page.draw_line(fitz.Point(M, y + 4), fitz.Point(PW - M, y + 4),
-                       color=(0.81, 0.43, 0.38), width=1.5)
-        y += 14
+        page.draw_line(fitz.Point(M, y + 3), fitz.Point(PW - M, y + 3),
+                       color=_rgb01(highlight_color), width=1.5)
+        y += 13
 
         for i, step in enumerate(steps, 1):
             img = render_step(step, i, highlight_color=highlight_color,
                               blur_strength=blur_strength)
-            head = f"{i}. {title_or_auto(step, i)}"
-            head_h = max(18, _wrapped_height(head, TW, 13, fontname="hebo") + 4)
-            note = step.note.strip()
-            note_h = (_wrapped_height(note, TW, 10) + 4) if note else 0
+            block = _step_html(i, title_or_auto(step, i), step.note.strip(), accent=accent)
+            text_h = _measure_html(block, TW)
             ratio = min(TW / img.width, MAX_IMG_H / img.height)
             img_w, img_h = img.width * ratio, img.height * ratio
-            block_h = head_h + note_h + img_h + GAP
+            block_h = text_h + GAP_TI + img_h + GAP
 
             # salto de pagina solo si el bloque no cabe (y no es lo primero de la pagina)
             if y + block_h > PH - M and y > M + 1:
@@ -269,20 +295,20 @@ def export_pdf(steps, out_path: str, *, title: str = "Guia", intro: str = "",
                 img_h = max(80, img_h - extra)
                 img_w = img.width * (img_h / img.height)
 
-            page.insert_textbox(fitz.Rect(M, y, PW - M, y + head_h), head, fontsize=13,
-                                color=(0.12, 0.23, 0.37), fontname="hebo")
-            y += head_h
-            if note:
-                page.insert_textbox(fitz.Rect(M, y, PW - M, y + note_h), note,
-                                    fontsize=10, color=(0.3, 0.35, 0.42))
-                y += note_h
+            # Acota la caja del texto al borde de pagina: si un titulo/nota fuese mas
+            # alto que la pagina, insert_htmlbox lo ESCALA para que quepa en vez de
+            # dibujar la parte inferior fuera del media box (que se perderia sin
+            # aviso, justo el fallo que esta version corrige).
+            text_bottom = min(y + text_h + 2, PH - M)
+            if y + text_h + 2 > PH - M:
+                logger.warning("Paso %d: el texto no cabe en una pagina; se reescala.", i)
+            page.insert_htmlbox(fitz.Rect(M, y, PW - M, text_bottom), block)
+            y = text_bottom + GAP_TI
             x0 = M + (TW - img_w) / 2
             page.insert_image(fitz.Rect(x0, y, x0 + img_w, y + img_h),
                               stream=_png_bytes(img))
             y += img_h + GAP
 
-        if not steps:
-            raise GuideError("No hay pasos para exportar.")
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         doc.save(out_path, garbage=3, deflate=True)
     finally:

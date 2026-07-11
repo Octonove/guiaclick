@@ -169,6 +169,68 @@ def test_export_pdf_paginates_when_full(tmp_path):
     doc.close()
 
 
+def test_export_pdf_renders_step_titles(tmp_path):
+    """Regresion del 2o feedback: los TITULOS de paso deben aparecer en el PDF.
+    Con insert_textbox y un alto de caja calculado a mano, los titulos a 13pt
+    desbordaban la caja y PyMuPDF los descartaba en silencio (PDF sin titulos)."""
+    import fitz
+    s1 = make_step(w=480, h=270); s1.title = "Pulsa en Guardar"
+    s2 = make_step(w=480, h=270); s2.title = "Escribe el nombre"
+    s2.note = "En el campo de arriba."
+    out = str(tmp_path / "titles.pdf")
+    guide.export_pdf([s1, s2], out, title="Mi Guia PDF")
+    doc = fitz.open(out)
+    text = "\n".join(doc[p].get_text("text") for p in range(doc.page_count))
+    doc.close()
+    assert "Mi Guia PDF" in text            # titulo de la guia
+    assert "Pulsa en Guardar" in text       # titulo del paso 1 (antes desaparecia)
+    assert "Escribe el nombre" in text      # titulo del paso 2
+    assert "En el campo de arriba." in text  # la nota del paso
+
+
+def test_safe_hex():
+    assert guide._safe_hex("#CE6E61") == "#CE6E61"
+    assert guide._safe_hex("#abc") == "#aabbcc"
+    assert guide._safe_hex("rojo") == "#CE6E61"
+    assert guide._safe_hex("") == "#CE6E61"
+
+
+def test_export_pdf_long_note_does_not_lose_pages(tmp_path):
+    """Una nota larguisima no debe romper el export ni descartar pasos: el texto
+    se reescala para caber en la pagina en vez de dibujarse fuera del media box."""
+    import fitz
+    s1 = make_step(w=480, h=270); s1.title = "Paso con nota enorme"
+    s1.note = ("Linea de nota muy larga. " * 400)      # ~10 000 caracteres
+    s2 = make_step(w=480, h=270); s2.title = "Paso siguiente normal"
+    out = str(tmp_path / "long.pdf")
+    guide.export_pdf([s1, s2], out, title="Guia con nota larga")   # no debe lanzar
+    doc = fitz.open(out)
+    text = "\n".join(doc[p].get_text("text") for p in range(doc.page_count))
+    doc.close()
+    assert "Paso con nota enorme" in text
+    assert "Paso siguiente normal" in text   # el 2o paso sigue presente
+
+
+def test_http_error_detail_never_raises():
+    """El extractor de errores de API es best-effort: ante cualquier fallo de
+    lectura del cuerpo (p.ej. http.client.IncompleteRead) devuelve '' y no rompe
+    el contrato (bool, str) de test_provider."""
+    import http.client
+    from octonove_core import llm
+
+    class _BadExc:
+        def read(self):
+            raise http.client.IncompleteRead(b"parcial")
+    assert llm._http_error_detail(_BadExc()) == ""
+    # y extrae el mensaje real cuando el cuerpo es JSON valido
+    import io
+
+    class _OkExc:
+        def read(self):
+            return b'{"error":{"message":"API key not valid."}}'
+    assert llm._http_error_detail(_OkExc()) == "API key not valid."
+
+
 def test_md_escape():
     assert guide._md_escape("# Titulo *raro* [x]") == r"\# Titulo \*raro\* \[x\]"
     assert "\n" not in guide._md_escape("linea1\nlinea2")
