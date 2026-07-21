@@ -598,25 +598,59 @@ class App(tk.Tk):
             messagebox.showinfo(APP_NAME, "Para mejorar los textos necesitas Ollama. "
                                 "Abre 'Configurar IA…' para elegir Ollama o una API.")
             return
-        self._set_status("Mejorando textos con IA…")
+        if getattr(self, "_improving", False):
+            return                       # ya hay una mejora en curso: no relanzar
+        self._improving = True
         steps = list(self.steps)   # snapshot: el usuario podria borrar pasos mientras corre
+        n = len(steps)
+        self._set_status(f"Mejorando textos con IA…  (0/{n})")
 
         def runner():
-            for i, st in enumerate(steps, 1):
-                if self._closing:
-                    return
-                base = guide.title_or_auto(st, i)
-                better = llm.polish_step(base)
-                if better:
-                    st.title = better.strip().strip('"')
-            self._ui(self._after_improve)
+            # Feedback por paso: sin esto, la 1a llamada (que carga el modelo en
+            # memoria: ~35 s o mas en frio) congela el estado y parece un cuelgue.
+            done = failed = 0
+            try:
+                for i, st in enumerate(steps, 1):
+                    if self._closing:
+                        return
+                    note = ("  ·  cargando el modelo la primera vez, aguarda…"
+                            if i == 1 else "")
+                    self._ui(lambda i=i, note=note: self._set_status(
+                        f"Mejorando textos con IA…  ({i}/{n}){note}"))
+                    base = guide.title_or_auto(st, i)
+                    try:
+                        better = llm.polish_step(base)
+                    except Exception:    # noqa: BLE001  nunca matar el hilo en silencio
+                        logger.exception("polish_step fallo en el paso %d", i)
+                        better = None
+                    if better:
+                        st.title = better.strip().strip('"')
+                        done += 1
+                    else:
+                        failed += 1
+            except Exception:            # noqa: BLE001
+                logger.exception("Fallo inesperado al mejorar textos con IA")
+            finally:
+                self._improving = False
+                self._ui(lambda d=done, f=failed: self._after_improve(d, f))
+
         threading.Thread(target=runner, daemon=True).start()
 
-    def _after_improve(self) -> None:
+    def _after_improve(self, done: int = 0, failed: int = 0) -> None:
         self._refresh_list()
         if 0 <= self.sel < len(self.steps):
             self._select(self.sel)
-        self._set_status("Textos mejorados con IA.")
+        if done and not failed:
+            self._set_status(f"Textos mejorados con IA ({done}).")
+        elif done:
+            self._set_status(f"Mejorados {done}; {failed} sin cambios.")
+        else:
+            self._set_status("No se pudo mejorar ningun texto.")
+            messagebox.showinfo(
+                APP_NAME, "No se pudo conectar con la IA para mejorar los textos.\n\n"
+                "Comprueba que Ollama sigue abierto (su icono en la barra de tareas) y que "
+                "el modelo esta disponible, e intentalo de nuevo. La primera vez puede tardar "
+                "unos segundos en cargar el modelo en memoria.")
 
     def _open_folder(self) -> None:
         try:
