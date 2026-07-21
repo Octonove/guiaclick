@@ -32,10 +32,19 @@ if (-not $iscc) {
     Write-Host "No se encontro Inno Setup (ISCC.exe). winget install JRSoftware.InnoSetup" -ForegroundColor Red
     exit 1
 }
-& $iscc "/DMyAppVersion=$ver" (Join-Path $PSScriptRoot "GuiaClick.iss")
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "`nInstalador: $(Join-Path $root ("installer\GuiaClick-Setup-$ver.exe"))" -ForegroundColor Green
-} else {
+# Se compila a una carpeta TEMPORAL (via /O) porque el Windows Search Indexer
+# bloquea intermitentemente la carpeta de salida bajo el perfil e Inno falla con
+# "EndUpdateResource failed (110)". Luego se mueve a installer\.
+$tmpOut = Join-Path $env:TEMP "GuiaClick_setup_build"
+New-Item -ItemType Directory -Force -Path $tmpOut | Out-Null
+& $iscc "/DMyAppVersion=$ver" "/O$tmpOut" (Join-Path $PSScriptRoot "GuiaClick.iss")
+if ($LASTEXITCODE -ne 0) {
     Write-Host "Fallo el instalador (codigo $LASTEXITCODE)." -ForegroundColor Red
     exit $LASTEXITCODE
 }
+$built = Join-Path $tmpOut "GuiaClick-Setup-$ver.exe"
+$installerDir = Join-Path $root "installer"
+New-Item -ItemType Directory -Force -Path $installerDir | Out-Null
+$out = Join-Path $installerDir "GuiaClick-Setup-$ver.exe"
+Move-Item -Force -Path $built -Destination $out
+Write-Host "`nInstalador: $out" -ForegroundColor Green
