@@ -48,12 +48,15 @@ def polish_title(text: str, model: str | None = None) -> str | None:
 
 def polish_note(text: str, title: str = "", model: str | None = None) -> str | None:
     """Corrige la NOTA/descripcion de un paso (solo si tiene texto). Puede ser
-    multilinea. `title` se pasa como contexto para no perder el sentido."""
+    multilinea. NO se le pasa el titulo como contexto a proposito: hacerlo hacia que
+    el modelo a veces COLARA el titulo del paso dentro de la nota. `title` se mantiene
+    en la firma por compatibilidad, pero no se usa."""
     if not text.strip() or not available():
         return None
-    ctx = f"\n(instruccion del paso: {title.strip()})" if title.strip() else ""
-    out = generate(f"Corrige la redaccion de esta nota de un paso, sin inventar nada:"
-                   f"\n\n{text.strip()}{ctx}", system=_SYS_FIX, model=model, temperature=0.1)
+    out = generate("Corrige solo la redaccion de esta nota (ortografia, gramatica y "
+                   "claridad). No anadas informacion, no repitas el titulo del paso ni "
+                   f"inventes nada:\n\n{text.strip()}", system=_SYS_FIX, model=model,
+                   temperature=0.1)
     return (out or "").strip().strip('"').strip() or None
 
 
