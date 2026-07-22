@@ -9,4 +9,4 @@ alternativa privada a Scribe/Tango para SOPs internos.
 from __future__ import annotations
 
 APP_NAME = "GuiaClick"
-APP_VERSION = "1.1.2"   # fuente unica de version: build-installer.ps1 la inyecta al .iss
+APP_VERSION = "1.1.3"   # fuente unica de version: build-installer.ps1 la inyecta al .iss

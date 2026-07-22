@@ -608,49 +608,71 @@ class App(tk.Tk):
         def runner():
             # Feedback por paso: sin esto, la 1a llamada (que carga el modelo en
             # memoria: ~35 s o mas en frio) congela el estado y parece un cuelgue.
-            done = failed = 0
+            done = errors = unchanged = 0
             try:
                 for i, st in enumerate(steps, 1):
                     if self._closing:
                         return
-                    note = ("  ·  cargando el modelo la primera vez, aguarda…"
+                    hint = ("  ·  cargando el modelo la primera vez, aguarda…"
                             if i == 1 else "")
-                    self._ui(lambda i=i, note=note: self._set_status(
-                        f"Mejorando textos con IA…  ({i}/{n}){note}"))
+                    self._ui(lambda i=i, hint=hint: self._set_status(
+                        f"Mejorando textos con IA…  ({i}/{n}){hint}"))
+                    changed = errored = False
+                    # 1) titulo/instruccion del paso
                     base = guide.title_or_auto(st, i)
                     try:
-                        better = llm.polish_step(base)
+                        nt = llm.polish_title(base)
                     except Exception:    # noqa: BLE001  nunca matar el hilo en silencio
-                        logger.exception("polish_step fallo en el paso %d", i)
-                        better = None
-                    if better:
-                        st.title = better.strip().strip('"')
+                        logger.exception("polish_title fallo en el paso %d", i)
+                        nt = None
+                    if nt is None:
+                        errored = True
+                    elif nt != st.title:
+                        st.title = nt
+                        changed = True
+                    # 2) nota/descripcion (solo si tiene texto)
+                    if st.note.strip():
+                        try:
+                            nn = llm.polish_note(st.note, st.title)
+                        except Exception:    # noqa: BLE001
+                            logger.exception("polish_note fallo en el paso %d", i)
+                            nn = None
+                        if nn is None:
+                            errored = True
+                        elif nn != st.note:
+                            st.note = nn
+                            changed = True
+                    if changed:
                         done += 1
+                    elif errored:
+                        errors += 1
                     else:
-                        failed += 1
+                        unchanged += 1
             except Exception:            # noqa: BLE001
                 logger.exception("Fallo inesperado al mejorar textos con IA")
             finally:
                 self._improving = False
-                self._ui(lambda d=done, f=failed: self._after_improve(d, f))
+                self._ui(lambda d=done, e=errors, u=unchanged:
+                         self._after_improve(d, e, u))
 
         threading.Thread(target=runner, daemon=True).start()
 
-    def _after_improve(self, done: int = 0, failed: int = 0) -> None:
+    def _after_improve(self, done: int = 0, errors: int = 0, unchanged: int = 0) -> None:
         self._refresh_list()
         if 0 <= self.sel < len(self.steps):
             self._select(self.sel)
-        if done and not failed:
-            self._set_status(f"Textos mejorados con IA ({done}).")
-        elif done:
-            self._set_status(f"Mejorados {done}; {failed} sin cambios.")
-        else:
+        if done:
+            extra = f"  ({errors} sin conexion)" if errors else ""
+            self._set_status(f"Textos mejorados con IA: {done}.{extra}")
+        elif errors:
             self._set_status("No se pudo mejorar ningun texto.")
             messagebox.showinfo(
                 APP_NAME, "No se pudo conectar con la IA para mejorar los textos.\n\n"
                 "Comprueba que Ollama sigue abierto (su icono en la barra de tareas) y que "
                 "el modelo esta disponible, e intentalo de nuevo. La primera vez puede tardar "
                 "unos segundos en cargar el modelo en memoria.")
+        else:
+            self._set_status("Tus textos ya estaban claros: sin cambios que hacer.")
 
     def _open_folder(self) -> None:
         try:

@@ -21,13 +21,42 @@ from octonove_core.llm import (  # noqa: F401
 )
 
 # --- ayudas especificas de GuiaClick ----------------------------------------
-_SYS = ("Eres un redactor tecnico. Reescribe instrucciones de una guia paso a paso "
-        "para que sean claras, breves e imperativas, en espanol. Responde solo con el "
-        "texto reescrito, sin comillas ni numeracion.")
+# CORRECTOR, no reescritor: un modelo local 8B, ante texto muy escueto, INVENTA
+# (p.ej. "Clic aqui" -> "Haz clic en «Continuar»"), lo cual en una guia es peor
+# que el original. Por eso el prompt corrige redaccion sin anadir informacion y
+# deja casi igual lo que ya esta claro; la temperatura es baja (0.1).
+_SYS_FIX = (
+    "Eres un corrector de estilo de guias paso a paso en espanol. Mejora la redaccion del "
+    "texto: corrige ortografia y gramatica y hazlo claro, breve e imperativo. PROHIBIDO "
+    "anadir informacion nueva o inventar botones, menus, nombres o pasos que no aparezcan "
+    "en el texto. Si el texto ya es una instruccion clara, devuelvelo casi igual. Responde "
+    "SOLO con el texto corregido, sin comillas, sin etiquetas y sin explicaciones.")
+
+
+def polish_title(text: str, model: str | None = None) -> str | None:
+    """Corrige el TITULO/instruccion de un paso (una sola linea, sin inventar nada)."""
+    if not text.strip() or not available():
+        return None
+    out = generate(f"Corrige la redaccion de este texto de un paso, sin inventar nada:"
+                   f"\n\n{text.strip()}", system=_SYS_FIX, model=model, temperature=0.1)
+    if not out:
+        return None
+    # el titulo es de una sola linea: quita comillas envolventes y saltos
+    line = out.strip().splitlines()[0].strip().strip('"').strip()
+    return line or None
+
+
+def polish_note(text: str, title: str = "", model: str | None = None) -> str | None:
+    """Corrige la NOTA/descripcion de un paso (solo si tiene texto). Puede ser
+    multilinea. `title` se pasa como contexto para no perder el sentido."""
+    if not text.strip() or not available():
+        return None
+    ctx = f"\n(instruccion del paso: {title.strip()})" if title.strip() else ""
+    out = generate(f"Corrige la redaccion de esta nota de un paso, sin inventar nada:"
+                   f"\n\n{text.strip()}{ctx}", system=_SYS_FIX, model=model, temperature=0.1)
+    return (out or "").strip().strip('"').strip() or None
 
 
 def polish_step(text: str, model: str | None = None) -> str | None:
-    if not text.strip() or not available():
-        return None
-    return generate(f"Reescribe este paso de forma clara y breve: {text}",
-                    system=_SYS, model=model, temperature=0.2)
+    """Compat: corrige solo el titulo (por si lo usa codigo antiguo)."""
+    return polish_title(text, model=model)
